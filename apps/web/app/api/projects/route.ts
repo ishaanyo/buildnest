@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { generateRoomDesign } from '@/lib/ai';
+import {
+  generateRoomDesign,
+  generateRoomDesignFromPhoto,
+  analyzeRoomForCosts,
+} from '@/lib/ai';
 import { calculateCosts } from '@/lib/cost';
 import { z } from 'zod';
 
@@ -10,6 +14,8 @@ const CreateSchema = z.object({
   themeSlug: z.string().optional(),
   roomType: z.string().optional(),
   userId: z.string().optional(),
+  /** Prefer photo-conditioned redesign when true (uses multimodal edit model) */
+  usePhotoReference: z.boolean().optional().default(true),
 });
 
 export async function POST(req: Request) {
@@ -28,7 +34,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Theme required' }, { status: 400 });
     }
 
-    // Create project in PROCESSING state
     const project = await prisma.project.create({
       data: {
         sourceImageUrl: data.sourceImageUrl,
@@ -39,30 +44,48 @@ export async function POST(req: Request) {
       },
     });
 
-    // AI generation
+    // 1) Vision analysis for costs (parallel-friendly)
+    const analysisPromise = analyzeRoomForCosts({
+      imageUrl: data.sourceImageUrl,
+      roomType: data.roomType,
+      themeSlug: theme.slug,
+    });
+
+    // 2) Image generation
     let images: string[] = [];
+    let provider = 'unknown';
     try {
-      const result = await generateRoomDesign({
+      const genFn = data.usePhotoReference
+        ? generateRoomDesignFromPhoto
+        : generateRoomDesign;
+
+      const result = await genFn({
         imageUrl: data.sourceImageUrl,
         themePrompt: theme.prompt,
+        themeName: theme.name,
         roomType: data.roomType,
       });
       images = result.images;
+      provider = result.provider;
     } catch (aiErr: any) {
       console.error('[ai]', aiErr);
       await prisma.project.update({
         where: { id: project.id },
         data: { status: 'FAILED', notes: aiErr.message },
       });
-      return NextResponse.json({ error: 'AI generation failed', detail: aiErr.message }, { status: 502 });
+      return NextResponse.json(
+        { error: 'AI generation failed', detail: aiErr.message },
+        { status: 502 }
+      );
     }
 
-    // Cost calculation
+    const analysis = await analysisPromise;
     const materials = await prisma.material.findMany({ where: { isActive: true } });
     const costs = calculateCosts({
       roomType: data.roomType,
       themeSlug: theme.slug,
       materials,
+      analysis,
     });
 
     const updated = await prisma.project.update({
@@ -74,12 +97,12 @@ export async function POST(req: Request) {
         laborCost: costs.laborCost,
         totalCost: costs.totalCost,
         materialBreakdown: costs.materials,
-        notes: costs.assumptions.join(' | '),
+        notes: [`provider:${provider}`, ...costs.assumptions].join(' | '),
       },
       include: { theme: true },
     });
 
-    return NextResponse.json({ project: updated, costs });
+    return NextResponse.json({ project: updated, costs, analysis });
   } catch (e: any) {
     console.error(e);
     if (e.name === 'ZodError') {

@@ -19,7 +19,10 @@ buildnest/
 - **Frontend**: Flutter 3.x (camera, gallery, image picker, HTTP)
 - **Backend**: Next.js 14 App Router + API Routes (deployed on Vercel)
 - **Database**: Neon Postgres + Prisma ORM
-- **AI**: Image-to-image room redesign (Replicate / Stability AI / custom ControlNet) — keys via env
+- **AI**: [AICredits](https://aicredits.in) OpenAI-compatible gateway
+  - Image: `black-forest-labs/flux-1.1-pro` (or DALL-E 3)
+  - Photo redesign: `google/gemini-2.5-flash-image`
+  - Cost/labor vision: `openai/gpt-4o-mini`
 - **Storage**: Vercel Blob or Cloudflare R2 for uploaded photos & renders
 - **Auth**: Optional Clerk / simple JWT (placeholder)
 

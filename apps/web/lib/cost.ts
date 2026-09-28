@@ -1,7 +1,9 @@
 /**
  * Material + Labor cost calculator.
- * Rules are intentionally simple and data-driven so you can refine later.
+ * Prefer vision-model analysis from AICredits; fall back to heuristics.
  */
+
+import type { RoomCostAnalysis } from './ai';
 
 export type MaterialLine = {
   materialId: string;
@@ -20,9 +22,9 @@ export type CostBreakdown = {
   laborCost: number;
   totalCost: number;
   assumptions: string[];
+  analysis?: RoomCostAnalysis;
 };
 
-// Rough room area heuristics (sqm) by room type when we don't have measurements
 const DEFAULT_AREA: Record<string, number> = {
   bedroom: 14,
   living: 22,
@@ -34,14 +36,14 @@ const DEFAULT_AREA: Record<string, number> = {
   other: 16,
 };
 
-// Labor rates (currency units per day / complexity multiplier)
-const LABOR_BASE = {
-  baseDaily: 180, // one skilled worker day
+/** Indian mid-market labor day rate (INR) — one skilled worker */
+const LABOR_BASE_INR = {
+  baseDaily: 1800, // ₹/day skilled labor (adjust per city)
   complexity: {
     simple: 1.0,
-    medium: 1.4,
-    complex: 2.0,
-  },
+    medium: 1.35,
+    complex: 1.9,
+  } as Record<string, number>,
   daysByCategory: {
     flooring: 2,
     paint: 1.5,
@@ -59,90 +61,150 @@ export function estimateArea(roomType?: string | null): number {
   return DEFAULT_AREA[roomType.toLowerCase()] ?? DEFAULT_AREA.other;
 }
 
-/**
- * Given a theme + room type + catalog materials, produce a plausible bill of materials.
- * In production you would use vision / LLM to detect surfaces and recommend exact SKUs.
- */
+type CatalogMaterial = {
+  id: string;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  unitPrice: number;
+};
+
 export function calculateCosts(params: {
   roomType?: string | null;
   themeSlug?: string | null;
-  materials: Array<{
-    id: string;
-    sku: string;
-    name: string;
-    category: string;
-    unit: string;
-    unitPrice: number;
-  }>;
+  materials: CatalogMaterial[];
+  analysis?: RoomCostAnalysis | null;
 }): CostBreakdown {
-  const area = estimateArea(params.roomType);
-  const assumptions: string[] = [
-    `Assumed room area ≈ ${area} sqm (no measurements provided)`,
-  ];
+  const assumptions: string[] = [];
+  const analysis = params.analysis;
+
+  const area =
+    analysis?.estimatedAreaSqm && analysis.estimatedAreaSqm > 0
+      ? analysis.estimatedAreaSqm
+      : estimateArea(params.roomType);
+
+  if (analysis?.estimatedAreaSqm) {
+    assumptions.push(`AI-estimated area ≈ ${area} sqm from room photo`);
+  } else {
+    assumptions.push(`Assumed room area ≈ ${area} sqm (no vision measurement)`);
+  }
 
   const byCat = (cat: string) =>
     params.materials.filter((m) => m.category === cat);
 
   const lines: MaterialLine[] = [];
+  const usedCategories = new Set<string>();
 
-  // Flooring
-  const floor = byCat('flooring')[0];
-  if (floor) {
-    const qty = Math.ceil(area * 1.05); // 5% waste
-    lines.push(line(floor, qty));
+  // Prefer AI material hints when present
+  if (analysis?.materialHints?.length) {
+    for (const hint of analysis.materialHints) {
+      const candidates = byCat(hint.category);
+      if (!candidates.length) continue;
+      const pick = candidates[0];
+      const qty = Math.max(0.5, hint.suggestedQty);
+      lines.push(line(pick, qty));
+      usedCategories.add(hint.category);
+    }
   }
 
-  // Paint (walls + ceiling rough)
-  const paint = byCat('paint')[0];
-  if (paint) {
-    const wallArea = area * 2.8; // rough
-    const liters = Math.ceil(wallArea / 10); // ~10 sqm per liter
-    lines.push(line(paint, liters));
+  // Fill gaps with surface-based quantities
+  const flooringSqm = analysis?.surfaces?.flooringSqm ?? area * 1.05;
+  if (!usedCategories.has('flooring')) {
+    const floor = byCat('flooring')[0];
+    if (floor) {
+      lines.push(line(floor, Math.ceil(flooringSqm)));
+      usedCategories.add('flooring');
+    }
   }
 
-  // Furniture / lighting / textiles — theme-aware light selection
-  const furniture = byCat('furniture');
-  if (furniture.length) {
-    // pick 1–2 items based on room
-    const picks =
-      params.roomType === 'bedroom'
-        ? furniture.filter((f) => f.sku.includes('BED')).slice(0, 1)
-        : furniture.slice(0, 1);
-    picks.forEach((f) => lines.push(line(f, 1)));
+  const wallSqm = analysis?.surfaces?.wallPaintSqm ?? area * 2.8;
+  if (!usedCategories.has('paint')) {
+    const paint = byCat('paint')[0];
+    if (paint) {
+      const liters = Math.ceil(wallSqm / 10);
+      lines.push(line(paint, liters));
+      usedCategories.add('paint');
+    }
   }
 
-  const lighting = byCat('lighting')[0];
-  if (lighting) lines.push(line(lighting, 1));
+  // Theme / room furniture & finish extras
+  if (!usedCategories.has('furniture')) {
+    const furniture = byCat('furniture');
+    if (furniture.length) {
+      const picks =
+        params.roomType === 'bedroom'
+          ? furniture.filter((f) => f.sku.includes('BED')).slice(0, 1)
+          : furniture.slice(0, 1);
+      picks.forEach((f) => {
+        lines.push(line(f, 1));
+        usedCategories.add('furniture');
+      });
+    }
+  }
 
-  const textiles = byCat('textiles');
-  textiles.slice(0, 2).forEach((t) => lines.push(line(t, 1)));
+  if (!usedCategories.has('lighting')) {
+    const lighting = byCat('lighting')[0];
+    if (lighting) {
+      lines.push(line(lighting, 1));
+      usedCategories.add('lighting');
+    }
+  }
 
-  const decor = byCat('decor')[0];
-  if (decor) lines.push(line(decor, 1));
+  if (!usedCategories.has('textiles')) {
+    byCat('textiles')
+      .slice(0, 2)
+      .forEach((t) => {
+        lines.push(line(t, 1));
+        usedCategories.add('textiles');
+      });
+  }
 
-  if (params.roomType === 'kitchen') {
+  if (!usedCategories.has('decor')) {
+    const decor = byCat('decor')[0];
+    if (decor) {
+      lines.push(line(decor, 1));
+      usedCategories.add('decor');
+    }
+  }
+
+  if (params.roomType === 'kitchen' && !usedCategories.has('kitchen')) {
     const kit = byCat('kitchen')[0];
-    if (kit) lines.push(line(kit, 6)); // 6 modules
+    if (kit) {
+      lines.push(line(kit, 6));
+      usedCategories.add('kitchen');
+    }
   }
 
   const materialCost = round2(lines.reduce((s, l) => s + l.total, 0));
 
-  // Labor: sum days by categories present
-  let laborDays = 0;
-  const cats = new Set(lines.map((l) => l.category));
-  cats.forEach((c) => {
-    laborDays += LABOR_BASE.daysByCategory[c] ?? 0.5;
-  });
-  laborDays = Math.max(laborDays, 1.5);
-  const complexity =
-    params.themeSlug === 'luxury' || params.themeSlug === 'japanese'
-      ? LABOR_BASE.complexity.complex
-      : LABOR_BASE.complexity.medium;
+  // Labor
+  let laborDays =
+    analysis?.laborDaysEstimate && analysis.laborDaysEstimate > 0
+      ? analysis.laborDaysEstimate
+      : 0;
 
-  const laborCost = round2(laborDays * LABOR_BASE.baseDaily * complexity);
+  if (!laborDays) {
+    usedCategories.forEach((c) => {
+      laborDays += LABOR_BASE_INR.daysByCategory[c] ?? 0.5;
+    });
+    laborDays = Math.max(laborDays, 1.5);
+  }
+
+  const complexityKey =
+    analysis?.complexity ||
+    (params.themeSlug === 'luxury' || params.themeSlug === 'japanese'
+      ? 'complex'
+      : 'medium');
+  const complexityMult = LABOR_BASE_INR.complexity[complexityKey] ?? 1.35;
+
+  const laborCost = round2(laborDays * LABOR_BASE_INR.baseDaily * complexityMult);
   assumptions.push(
-    `Labor ≈ ${laborDays.toFixed(1)} worker-days × complexity ${complexity}`
+    `Labor ≈ ${laborDays.toFixed(1)} worker-days × complexity ${complexityKey} (${complexityMult}×) @ ₹${LABOR_BASE_INR.baseDaily}/day`
   );
+  if (analysis?.notes?.length) {
+    assumptions.push(...analysis.notes);
+  }
 
   return {
     materials: lines,
@@ -150,11 +212,12 @@ export function calculateCosts(params: {
     laborCost,
     totalCost: round2(materialCost + laborCost),
     assumptions,
+    analysis: analysis ?? undefined,
   };
 }
 
 function line(
-  m: { id: string; sku: string; name: string; category: string; unit: string; unitPrice: number },
+  m: CatalogMaterial,
   qty: number
 ): MaterialLine {
   return {

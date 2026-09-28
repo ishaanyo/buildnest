@@ -6,44 +6,54 @@
 2. Copy the connection string (pooled recommended for serverless)
 3. Set `DATABASE_URL` in Vercel and locally
 
-## 2. Vercel Project
+## 2. AICredits (required for AI)
+
+1. Account + key at https://aicredits.in
+2. Set env vars:
+
+```bash
+AICREDITS_API_KEY=sk-live-...
+AICREDITS_BASE_URL=https://api.aicredits.in/v1
+AICREDITS_IMAGE_MODEL=black-forest-labs/flux-1.1-pro   # or dall-e-3
+AICREDITS_EDIT_MODEL=google/gemini-2.5-flash-image     # photo-conditioned redesign
+AICREDITS_VISION_MODEL=openai/gpt-4o-mini              # room analysis + costs
+```
+
+### Model choices (from https://aicredits.in/models)
+
+| Task | Recommended model | Why |
+|------|-------------------|-----|
+| Interior render (text→image) | `black-forest-labs/flux-1.1-pro` | Photoreal, good interiors, ~₹4/img |
+| Fast/cheap render | `black-forest-labs/flux-1-schnell` | ~₹0.20/img |
+| Classic | `dall-e-3` | Reliable, ~₹4–10/img |
+| Photo → redesign | `google/gemini-2.5-flash-image` | Multimodal image edit via Chat API |
+| Room analysis / BOM | `openai/gpt-4o-mini` or `google/gemini-2.0-flash` | Vision + JSON structured output |
+
+## 3. Vercel Project
 
 ```bash
 cd apps/web
 npm install
+cp .env.example .env   # fill values
 npx prisma generate
-npx prisma db push          # or migrate
-vercel                      # link & deploy
+npx prisma db push
+npm run db:seed
+vercel
 ```
 
-Add env vars in Vercel dashboard.
-
-## 3. Flutter App
+## 4. Flutter App
 
 ```bash
 cd apps/flutter_app
+flutter create . --project-name buildnest
 flutter pub get
-flutter run
+flutter run --dart-define=API_BASE=https://your-app.vercel.app
 ```
 
-Update `lib/services/api_service.dart` with your Vercel URL.
+## 5. Flow
 
-## 4. AI Provider (Replicate example)
-
-1. Create account at replicate.com
-2. Use a model such as:
-   - `jagilley/controlnet-hough` or room-specific interior models
-   - Or `stability-ai/stable-diffusion-img2img`
-3. Set `REPLICATE_API_TOKEN`
-
-You can swap the provider in `apps/web/lib/ai.ts`.
-
-## 5. GitHub
-
-```bash
-git add .
-git commit -m "Initial BuildNest scaffold"
-git push origin main
-```
-
-Connect the repo to Vercel for automatic deploys.
+1. Upload room photo / plot
+2. Pick theme (prompt stored in DB)
+3. API: vision analysis → material + labor estimate (INR)
+4. API: Flux / Gemini image gen → design renders
+5. User buys material + optional labor package
