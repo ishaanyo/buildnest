@@ -1,10 +1,14 @@
 ﻿# dependencies
+node_modules
 /node_modules
+apps/web/node_modules
 /.pnp
 .pnp.js
 
 # next.js
+.next/
 /.next/
+apps/web/.next/
 /out/
 
 # production
