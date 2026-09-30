@@ -1,37 +1,40 @@
 # BuildNest Flutter App
 
-## Run
+## Fix missing Android / iOS folders
+
+The repo only contains `lib/` + `pubspec.yaml`. Generate platforms once:
 
 ```bash
+cd apps/flutter_app
+flutter create . --project-name buildnest
 flutter pub get
-flutter run
 ```
 
-## API base URL
+## Point to production API
 
-Default in `lib/services/api_service.dart`:
+Default is already:
 
-- Android emulator: `http://10.0.2.2:3000`
-- iOS simulator: `http://localhost:3000`
-- Physical device: your machine LAN IP or Vercel URL
+`https://buildnest-sigma.vercel.app`
 
-Override at build time:
+Or:
 
 ```bash
-flutter run --dart-define=API_BASE=https://your-app.vercel.app
+flutter run --dart-define=API_BASE=https://buildnest-sigma.vercel.app
 ```
 
-## Permissions
+## Android permissions
 
-**Android** (`android/app/src/main/AndroidManifest.xml`):
+After `flutter create`, edit `android/app/src/main/AndroidManifest.xml` and add inside `<manifest>`:
 
 ```xml
-<uses-permission android:name="android.permission.CAMERA"/>
 <uses-permission android:name="android.permission.INTERNET"/>
+<uses-permission android:name="android.permission.CAMERA"/>
 <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
 ```
 
-**iOS** (`ios/Runner/Info.plist`):
+## iOS (if needed)
+
+In `ios/Runner/Info.plist`:
 
 ```xml
 <key>NSCameraUsageDescription</key>
@@ -40,10 +43,8 @@ flutter run --dart-define=API_BASE=https://your-app.vercel.app
 <string>Pick a room photo or plot map</string>
 ```
 
-Create the Flutter platform folders with:
+## Run
 
 ```bash
-flutter create . --project-name buildnest
+flutter run
 ```
-
-(then keep the `lib/` and `pubspec.yaml` we already wrote).

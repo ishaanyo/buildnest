@@ -3,10 +3,11 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../models/models.dart';
 
-/// Change this to your Vercel deployment URL after deploy.
+/// Production Vercel API. Override with:
+/// flutter run --dart-define=API_BASE=https://other-url.vercel.app
 const String kBaseUrl = String.fromEnvironment(
   'API_BASE',
-  defaultValue: 'http://10.0.2.2:3000', // Android emulator → host localhost
+  defaultValue: 'https://buildnest-sigma.vercel.app',
 );
 
 class ApiService {
