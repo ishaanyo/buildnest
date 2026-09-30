@@ -20,7 +20,6 @@ class AppTheme {
           primary: accent,
           secondary: accentSoft,
           surface: surface,
-          background: bg,
         ),
         textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme).apply(
           bodyColor: text,
@@ -40,7 +39,7 @@ class AppTheme {
             textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
           ),
         ),
-        cardTheme: CardTheme(
+        cardTheme: CardThemeData(
           color: surface,
           elevation: 0,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
